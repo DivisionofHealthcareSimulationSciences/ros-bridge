@@ -37,6 +37,9 @@ AMM::DDSManager<void>* mgr = new AMM::DDSManager<void>(configFile);
 AMM::UUID m_uuid;
 
 //std::mutex nds_mutex;
+//<DataRequest xsi:type="PhysiologyDataRequestData" Name="CerebralBloodFlow" Unit="mL/min"       Precision="3"/>
+//<DataRequest xsi:type="PhysiologyDataRequestData" Name="IntracranialPressure" Unit="mmHg"      Precision="3"/>
+//<DataRequest xsi:type="PhysiologyDataRequestData" Name="CerebralPerfusionPressure" Unit="mmHg" Precision="3"/>
 std::map<std::string, std::string> nodeDataStorage = {
       {"Cardiovascular_HeartRate", "0"},
       {"Cardiovascular_Arterial_Systolic_Pressure", "0"},
@@ -45,6 +48,9 @@ std::map<std::string, std::string> nodeDataStorage = {
       {"Respiration_EndTidalCarbonDioxide", "0"},
       {"Respiratory_Respiration_Rate", "0"},
       {"Energy_Core_Temperature", "0"},
+      {"CerebralBloodFlow", "0"},
+      {"IntracranialPressure", "0"},
+      {"CerebralPerfusionPressure", "0"},
       {"SIM_TIME", "0"},
    };
 
@@ -64,13 +70,38 @@ const std::string target = "/";
 //write data packets to websocket
 void writeTestPacket() {
    // MoHSES - ROS - first contact!
-   std::string message = "{\"op\":\"publish\",\"topic\":\"/hr/control/speech/say\",\"msg\": {\"text\": \"Greetings from MoHSES\"}}";
+   std::string message = "{\"op\":\"publish\",\"topic\":\"/hr/control/speech/say\",\"msg\": {\"text\": \"MoHSES connected via ros-bridge\"}}";
    LOG_DEBUG << "Writing message to ROS: " << message;
    ws_session->do_write(message);
 }
 
 void writePhysDataPacket() {
-   std::string message = "{\"op\":\"publish\",\"topic\":\"/hr/control/speech/say\",\"msg\": {\"text\": \"My heart rate is " + nodeDataStorage["Cardiovascular_HeartRate"] + " bpm.\"}}";
+   // forward relevant phys data to ROS/Sophia
+   std::string message;
+   //std::string message = "{\"op\":\"publish\",\"topic\":\"/hr/control/speech/say\",\"msg\": {\"text\": \"My heart rate is " + nodeDataStorage["Cardiovascular_HeartRate"] + " bpm.\"}}";
+
+   // publish each phys value as a separate message
+   // heart rate
+   message = "{\"op\":\"publish\",\"topic\":\"/hr/physiology\",\"msg\": {\"physiologyvalue\": {\"name\":\"Cardiovascular_HeartRate\",\"value\":"\
+      + nodeDataStorage["Cardiovascular_HeartRate"] + "}}}";
+   LOG_DEBUG << "Writing message to ROS: " << message;
+   ws_session->do_write(message);
+
+   // cerebral blood flow
+   message = "{\"op\":\"publish\",\"topic\":\"/hr/physiology\",\"msg\": {\"physiologyvalue\": {\"name\":\"CerebralBloodFlow\",\"value\":"\
+   + nodeDataStorage["CerebralBloodFlow"] + "}}}";
+   LOG_DEBUG << "Writing message to ROS: " << message;
+   ws_session->do_write(message);
+
+   // inracranial pressure
+   message = "{\"op\":\"publish\",\"topic\":\"/hr/physiology\",\"msg\": {\"physiologyvalue\": {\"name\":\"IntracranialPressure\",\"value\":"\
+   + nodeDataStorage["IntracranialPressure"] + "}}}";
+   LOG_DEBUG << "Writing message to ROS: " << message;
+   ws_session->do_write(message);
+
+   //cerebral perfusion pressure
+   message = "{\"op\":\"publish\",\"topic\":\"/hr/physiology\",\"msg\": {\"physiologyvalue\": {\"name\":\"CerebralPerfusionPressure\",\"value\":"\
+   + nodeDataStorage["CerebralPerfusionPressure"] + "}}}";
    LOG_DEBUG << "Writing message to ROS: " << message;
    ws_session->do_write(message);
 }
@@ -151,17 +182,23 @@ void OnPhysiologyValue(AMM::PhysiologyValue& physiologyvalue, eprosima::fastrtps
       //if ( arguments.verbose )
       //   LOG_DEBUG << "[AMM_Node_Data] " << physiologyvalue.name() << " = " << physiologyvalue.value();
       // phys values are updated every 200ms (5Hz)
-      // forward to ROS only once per data update
-      // to reduce frequency
+      // check when new SIM_TIME is received and reduce to updates only once per second
+      // forward data to ROS
       if (physiologyvalue.name()=="SIM_TIME") {
+         static float sim_time_last = 0.0;
+         float sim_time = 0.0;
          // reformat SIM_TIME for storage
          std::ostringstream oss;
          oss.precision(1);
          oss << std::fixed << physiologyvalue.value();
          nodeDataStorage["SIM_TIME"] = oss.str();
+         sim_time = std::stof(nodeDataStorage["SIM_TIME"]);
          //LOG_DEBUG << "sim time stringstream: " << oss.str();
          // send data if websocket connection to ros is live
-         if ( websocket_connected ) writePhysDataPacket();
+         if ( websocket_connected && (sim_time-sim_time_last > 1.0) ) {
+            writePhysDataPacket();
+            sim_time_last = sim_time;
+         }
       }
    }
 
